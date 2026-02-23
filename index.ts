@@ -61,7 +61,7 @@ const DEFAULT_CONFIG: Config = {
 const GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".pi", "agent", "system-theme.json");
 const DETECTION_TIMEOUT_MS = 1200;
 const MIN_POLL_MS = 1000;
-const OSC11_QUERY_TIMEOUT_MS = 2200;
+const OSC11_QUERY_TIMEOUT_MS = 3200;
 const OSC11_MIN_INTERVAL_MS = 15_000;
 const OSC11_DISABLE_AFTER_FAILURES = 3;
 const OSC11_DISABLE_COOLDOWN_MS = 60_000;
@@ -211,35 +211,23 @@ const OSC11_QUERY_SCRIPT = `
 'use strict';
 const fs = require('fs');
 
-const O_NONBLOCK = fs.constants.O_NONBLOCK ?? 0;
 let fd;
-try { fd = fs.openSync('/dev/tty', fs.constants.O_RDWR | fs.constants.O_NOCTTY | O_NONBLOCK); }
+try { fd = fs.openSync('/dev/tty', fs.constants.O_RDWR | fs.constants.O_NOCTTY); }
 catch { process.exit(1); }
 
-// Send OSC 11 query. Emit both ST and BEL terminated variants for compatibility.
-try {
-    fs.writeSync(fd, '\x1b]11;?\x1b\\');
-    fs.writeSync(fd, '\x1b]11;?\x07');
-}
+// Send OSC 11 query (ST terminator)
+try { fs.writeSync(fd, '\x1b]11;?\x1b\\'); }
 catch { try { fs.closeSync(fd); } catch {} process.exit(1); }
 
 const buf = Buffer.alloc(1024);
 let response = '';
-const deadline = Date.now() + 1800;
+const deadline = Date.now() + 2500;
 
 function tryRead() {
-    while (true) {
-        try {
-            const n = fs.readSync(fd, buf, 0, buf.length, null);
-            if (n <= 0) return;
-            response += buf.toString('utf8', 0, n);
-            if (response.length > 8192) response = response.slice(-4096);
-        } catch (err) {
-            const code = err && err.code;
-            if (code === 'EAGAIN' || code === 'EWOULDBLOCK') return;
-            return;
-        }
-    }
+    try {
+        const n = fs.readSync(fd, buf, 0, buf.length);
+        if (n > 0) response += buf.toString('utf8', 0, n);
+    } catch {}
 }
 
 function to8Bit(hex) {
@@ -251,7 +239,6 @@ function to8Bit(hex) {
 
 function done() {
     try { fs.closeSync(fd); } catch {}
-    // Keep parser permissive: tmux may wrap control sequences, but rgb payload remains stable.
     const m = response.match(/rgb:([0-9a-fA-F]{2,8})\\/([0-9a-fA-F]{2,8})\\/([0-9a-fA-F]{2,8})/);
     if (m) {
         const r = to8Bit(m[1]);
@@ -266,7 +253,7 @@ function done() {
 function poll() {
     tryRead();
     if (response.includes('rgb:') || Date.now() > deadline) return done();
-    setTimeout(poll, 16);
+    setTimeout(poll, 20);
 }
 
 poll();
