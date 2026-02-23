@@ -78,6 +78,30 @@ For environments where neither OSC 11 nor OS detection works, you can push an ov
 }
 ```
 
+## ⚠️ Performance tuning notes (important)
+
+This extension queries terminal background color (OSC 11) in SSH sessions. Aggressive polling can cause terminal artifacts (garbled startup output) or input lag on some terminal/SSH combinations.
+
+Recommended ranges:
+
+- `pollMs`: **3000–8000** (default `8000`)
+- `PI_SYSTEM_THEME_OSC11_MIN_INTERVAL_MS`: **8000–15000** (default `15000`)
+
+Avoid overly aggressive values unless you have tested your environment thoroughly:
+
+- `pollMs < 2000`
+- `PI_SYSTEM_THEME_OSC11_MIN_INTERVAL_MS < 5000`
+
+If you notice lag, slash-command stutter, or startup artifacts:
+
+1. Increase `pollMs`
+2. Increase `PI_SYSTEM_THEME_OSC11_MIN_INTERVAL_MS`
+3. Temporarily disable OSC11 probing with:
+
+```bash
+export PI_SYSTEM_THEME_OSC11_ENABLED=0
+```
+
 ## Environment variables
 
 | Variable | Default | Description |
