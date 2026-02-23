@@ -1,7 +1,7 @@
 {
-    "name": "pi-sync-system-theme",
-    "version": "0.2.7",
-    "description": "Sync pi theme with system appearance — works locally and over SSH via OSC 11 terminal queries",
+    "name": "pi-theme-sync",
+    "version": "0.3.0",
+    "description": "Sync Pi theme with terminal appearance — works locally and over SSH via OSC 11 terminal queries",
     "keywords": [
         "pi-package",
         "pi",
@@ -27,10 +27,10 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/mise42/pi-sync-system-theme.git"
+        "url": "git+https://github.com/mise42/pi-theme-sync.git"
     },
-    "homepage": "https://github.com/mise42/pi-sync-system-theme#readme",
+    "homepage": "https://github.com/mise42/pi-theme-sync#readme",
     "bugs": {
-        "url": "https://github.com/mise42/pi-sync-system-theme/issues"
+        "url": "https://github.com/mise42/pi-theme-sync/issues"
     }
 }

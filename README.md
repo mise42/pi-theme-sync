@@ -1,8 +1,8 @@
-# pi-sync-system-theme
+# pi-theme-sync
 
-Sync pi theme with system appearance — works both **locally** and **over SSH**.
+Sync Pi theme with terminal appearance — works both **locally** and **over SSH**.
 
-Drop-in replacement for `pi-system-theme`, with added SSH support.
+Terminal-first theme sync for Pi, with robust SSH support.
 
 ## How it works
 
@@ -10,9 +10,9 @@ The extension uses a three-layer detection strategy (in priority order):
 
 | Priority | Strategy | When it helps |
 |----------|----------|---------------|
-| 1 | **Override file** (`~/.pi/agent/system-theme-override.json`) | Manual push from another machine |
+| 1 | **Override file** (`~/.pi/agent/theme-sync-override.json`) | Manual push from another machine |
 | 2 | **Terminal query** (OSC 11 background-color) | Preferred in interactive terminal sessions (local/SSH/tmux) for fast theme detection |
-| 3 | **OS-level detection** (macOS `defaults` / GNOME `gsettings` / Windows `reg`) | Local sessions without a capable terminal |
+| 3 | **OS-level detection** (optional fallback) | Disabled by default; can be enabled explicitly |
 
 ### Why it works over SSH
 
@@ -25,7 +25,7 @@ The OSC 11 query runs in a short-lived subprocess that opens `/dev/tty` directly
 ## Install
 
 ```bash
-pi install npm:pi-sync-system-theme
+pi install npm:pi-theme-sync
 ```
 
 > **Important:** Remove `pi-system-theme` first to avoid two extensions fighting over `setTheme`:
@@ -35,13 +35,13 @@ pi install npm:pi-sync-system-theme
 
 ## Package rename migration
 
-This package was renamed from `pi-system-theme-ssh-bridge` to `pi-sync-system-theme`.
+This package was renamed from `pi-system-theme-ssh-bridge` / `pi-sync-system-theme` to `pi-theme-sync`.
 
 If you installed the old package name, run:
 
 ```bash
 pi remove npm:pi-system-theme-ssh-bridge
-pi install npm:pi-sync-system-theme
+pi install npm:pi-theme-sync
 ```
 
 ## Configuration
@@ -52,7 +52,7 @@ Use the `/system-theme` command inside pi to configure:
 2. **Light theme** name (default: `light`)
 3. **Poll interval** in ms (default: `8000`)
 
-Settings are saved to `~/.pi/agent/system-theme.json` (same location as `pi-system-theme`, so existing config carries over).
+Settings are saved to `~/.pi/agent/theme-sync-config.json`.
 
 ### Runtime commands
 
@@ -118,36 +118,37 @@ This extension queries terminal background color (OSC 11) in interactive session
 Recommended ranges:
 
 - `pollMs`: **3000–8000** (default `8000`)
-- `PI_SYSTEM_THEME_OSC11_MIN_INTERVAL_MS`: **8000–15000** (default `15000`)
+- `PI_THEME_SYNC_OSC11_MIN_INTERVAL_MS`: **8000–15000** (default `15000`)
 
 Avoid overly aggressive values unless you have tested your environment thoroughly:
 
 - `pollMs < 2000`
-- `PI_SYSTEM_THEME_OSC11_MIN_INTERVAL_MS < 5000`
+- `PI_THEME_SYNC_OSC11_MIN_INTERVAL_MS < 5000`
 
 If you notice lag, slash-command stutter, or startup artifacts:
 
 1. Increase `pollMs`
-2. Increase `PI_SYSTEM_THEME_OSC11_MIN_INTERVAL_MS`
+2. Increase `PI_THEME_SYNC_OSC11_MIN_INTERVAL_MS`
 3. Temporarily disable OSC11 probing with:
 
 ```bash
-export PI_SYSTEM_THEME_OSC11_ENABLED=0
+export PI_THEME_SYNC_OSC11_ENABLED=0
 ```
 
 ## Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PI_SYSTEM_THEME_OVERRIDE_FILE` | `~/.pi/agent/system-theme-override.json` | Override file path |
-| `PI_SYSTEM_THEME_OVERRIDE_MAX_AGE_MS` | `60000` | Max age before override is considered stale |
-| `PI_SYSTEM_THEME_OSC11_ENABLED` | `1` | Enable/disable OSC 11 terminal query (`0` to disable) |
-| `PI_SYSTEM_THEME_OSC11_MIN_INTERVAL_MS` | `15000` | Minimum interval between OSC 11 probes in interactive sessions |
+| `PI_THEME_SYNC_OVERRIDE_FILE` | `~/.pi/agent/theme-sync-override.json` | Override file path |
+| `PI_THEME_SYNC_OVERRIDE_MAX_AGE_MS` | `60000` | Max age before override is considered stale |
+| `PI_THEME_SYNC_OSC11_ENABLED` | `1` | Enable/disable OSC 11 terminal query (`0` to disable) |
+| `PI_THEME_SYNC_OSC11_MIN_INTERVAL_MS` | `15000` | Minimum interval between OSC 11 probes in interactive sessions |
+| `PI_THEME_SYNC_OS_FALLBACK` | `0` | Enable OS-level fallback detection (`1` to enable) |
 
 ## Compatibility
 
 - **Terminals:** Any terminal supporting OSC 11 color queries (Ghostty, iTerm2, kitty, foot, WezTerm, xterm, etc.)
-- **OS detection:** macOS, Linux (GNOME gsettings), Windows
+- **OS detection fallback:** macOS, Linux (GNOME gsettings), Windows (when `PI_THEME_SYNC_OS_FALLBACK=1`)
 - **SSH:** Works transparently — no special setup required
 - **tmux:** Supported (including long-lived sessions where `SSH_*` env vars may be missing)
 - **Ghostty `theme = auto`:** Fully supported. When Ghostty switches colors, the next poll detects it.
@@ -156,8 +157,8 @@ export PI_SYSTEM_THEME_OSC11_ENABLED=0
 ## Migrating from pi-system-theme
 
 1. `pi remove npm:pi-system-theme`
-2. `pi install npm:pi-sync-system-theme`
-3. Done. Your `~/.pi/agent/system-theme.json` config (if any) is reused automatically.
+2. `pi install npm:pi-theme-sync`
+3. Configure `/system-theme` as needed.
 
 ## License
 

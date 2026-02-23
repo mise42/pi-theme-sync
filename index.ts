@@ -1,10 +1,10 @@
 /**
- * pi-sync-system-theme
+ * pi-theme-sync
  *
- * Sync pi theme with system appearance — works both locally and over SSH.
+ * Sync pi theme with terminal appearance — works both locally and over SSH.
  *
  * Detection strategy (in priority order):
- *   1. Override file  (~/.pi/agent/system-theme-override.json)
+ *   1. Override file  (~/.pi/agent/theme-sync-override.json)
  *      – If present & fresh, use its "dark" / "light" value directly.
  *      – If value is "auto", fall through.
  *   2. Terminal query  (OSC 11 background-color)
@@ -12,8 +12,7 @@
  *        through the SSH tunnel back to the local terminal (Ghostty, etc.).
  *      – A helper subprocess opens /dev/tty to avoid interfering with
  *        pi's own stdin/stdout.
- *   3. OS-level detection  (macOS defaults / GNOME gsettings / Windows reg)
- *      – Classic local detection, same as pi-system-theme.
+ *   3. OS-level detection (optional fallback, disabled by default)
  */
 
 import { execFile, spawn } from "node:child_process";
@@ -54,11 +53,11 @@ const DEFAULT_CONFIG: Config = {
     darkTheme: "dark",
     lightTheme: "light",
     pollMs: 8000,
-    overrideFile: path.join(os.homedir(), ".pi", "agent", "system-theme-override.json"),
+    overrideFile: path.join(os.homedir(), ".pi", "agent", "theme-sync-override.json"),
     overrideMaxAgeMs: 60_000,
 };
 
-const GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".pi", "agent", "system-theme.json");
+const GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".pi", "agent", "theme-sync-config.json");
 const DETECTION_TIMEOUT_MS = 1200;
 const MIN_POLL_MS = 1000;
 const OSC11_QUERY_TIMEOUT_MS = 3200;
@@ -114,7 +113,7 @@ function canManageThemes(ctx: ExtensionContext): boolean {
 
 
 // ---------------------------------------------------------------------------
-// Config I/O  (reads ~/.pi/agent/system-theme.json written by /system-theme)
+// Config I/O  (reads ~/.pi/agent/theme-sync-config.json written by /system-theme)
 // ---------------------------------------------------------------------------
 
 async function loadConfig(): Promise<Config> {
@@ -134,12 +133,12 @@ async function loadConfig(): Promise<Config> {
     }
 
     // Env overrides for bridge-specific settings
-    const envFile = process.env.PI_SYSTEM_THEME_OVERRIDE_FILE;
+    const envFile = process.env.PI_THEME_SYNC_OVERRIDE_FILE;
     if (typeof envFile === "string" && envFile.trim().length > 0) {
         config.overrideFile = envFile.trim();
     }
 
-    const envMaxAge = process.env.PI_SYSTEM_THEME_OVERRIDE_MAX_AGE_MS;
+    const envMaxAge = process.env.PI_THEME_SYNC_OVERRIDE_MAX_AGE_MS;
     if (envMaxAge) {
         const v = Number.parseInt(envMaxAge, 10);
         if (Number.isFinite(v)) config.overrideMaxAgeMs = Math.max(0, v);
@@ -404,16 +403,21 @@ type Osc11State = {
 };
 
 function isOsc11Enabled(): boolean {
-    const raw = String(process.env.PI_SYSTEM_THEME_OSC11_ENABLED ?? "1").trim().toLowerCase();
+    const raw = String(process.env.PI_THEME_SYNC_OSC11_ENABLED ?? "1").trim().toLowerCase();
     return raw !== "0" && raw !== "false" && raw !== "off";
 }
 
 function getOsc11MinIntervalMs(): number {
-    const raw = process.env.PI_SYSTEM_THEME_OSC11_MIN_INTERVAL_MS;
+    const raw = process.env.PI_THEME_SYNC_OSC11_MIN_INTERVAL_MS;
     if (!raw) return OSC11_MIN_INTERVAL_MS;
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isFinite(parsed)) return OSC11_MIN_INTERVAL_MS;
     return Math.max(1000, parsed);
+}
+
+function isOSFallbackEnabled(): boolean {
+    const raw = String(process.env.PI_THEME_SYNC_OS_FALLBACK ?? "0").trim().toLowerCase();
+    return raw === "1" || raw === "true" || raw === "on";
 }
 
 async function resolveAppearance(
@@ -510,11 +514,13 @@ async function resolveAppearanceWithTrace(
         trace.osc11SkipReason = trace.osc11Enabled ? "disabled-by-mode" : "disabled";
     }
 
-    const fromOS = await detectOSAppearance();
-    trace.osResult = fromOS;
-    if (fromOS) {
-        trace.chosen = "os";
-        trace.appearance = fromOS;
+    if (isOSFallbackEnabled()) {
+        const fromOS = await detectOSAppearance();
+        trace.osResult = fromOS;
+        if (fromOS) {
+            trace.chosen = "os";
+            trace.appearance = fromOS;
+        }
     }
 
     return trace;
@@ -607,7 +613,7 @@ export default function systemThemeBridge(pi: ExtensionAPI): void {
                 const msg = result.error ?? "unknown";
                 if (lastAppliedTheme !== `err:${targetTheme}:${msg}`) {
                     lastAppliedTheme = `err:${targetTheme}:${msg}`;
-                    console.warn(`[pi-sync-system-theme] setTheme("${targetTheme}"): ${msg}`);
+                    console.warn(`[pi-theme-sync] setTheme("${targetTheme}"): ${msg}`);
                 }
             }
         } finally {
@@ -643,7 +649,7 @@ export default function systemThemeBridge(pi: ExtensionAPI): void {
                 const saveOpt = "Save and apply";
                 const cancelOpt = "Cancel";
 
-                const choice = await ctx.ui.select("pi-sync-system-theme", [
+                const choice = await ctx.ui.select("pi-theme-sync", [
                     darkOpt,
                     lightOpt,
                     pollOpt,
@@ -751,7 +757,7 @@ export default function systemThemeBridge(pi: ExtensionAPI): void {
                 `pollMs=${config.pollMs}`,
             ];
 
-            console.warn(`[pi-sync-system-theme][debug] ${lines.join(" | ")}`);
+            console.warn(`[pi-theme-sync][debug] ${lines.join(" | ")}`);
             ctx.ui.notify(lines.join("\n"), "info");
         },
     });

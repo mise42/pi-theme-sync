@@ -20,7 +20,7 @@ fi
 UPDATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 SOURCE="$(hostname)"
 
-ssh "$TARGET" "mkdir -p ~/.pi/agent && cat > ~/.pi/agent/system-theme-override.json <<'JSON'
+ssh "$TARGET" "mkdir -p ~/.pi/agent && cat > ~/.pi/agent/theme-sync-override.json <<'JSON'
 {
   \"appearance\": \"$APPEARANCE\",
   \"updatedAt\": \"$UPDATED_AT\",
