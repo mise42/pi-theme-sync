@@ -203,24 +203,45 @@ async function readOverrideFile(filePath: string, maxAgeMs: number): Promise<App
 const OSC11_QUERY_SCRIPT = `
 'use strict';
 const fs = require('fs');
+const tty = require('tty');
 
+const O_NONBLOCK = fs.constants.O_NONBLOCK ?? 0;
 let fd;
-try { fd = fs.openSync('/dev/tty', fs.constants.O_RDWR | fs.constants.O_NOCTTY); }
+try { fd = fs.openSync('/dev/tty', fs.constants.O_RDWR | fs.constants.O_NOCTTY | O_NONBLOCK); }
 catch { process.exit(1); }
 
-// Send OSC 11 query (ST terminator)
-try { fs.writeSync(fd, '\x1b]11;?\x1b\\'); }
-catch { try { fs.closeSync(fd); } catch {} process.exit(1); }
+let ttyIn = null;
+try {
+    ttyIn = new tty.ReadStream(fd);
+    if (ttyIn.isTTY) ttyIn.setRawMode(true);
+} catch {}
+
+function cleanup() {
+    try { if (ttyIn && ttyIn.isTTY) ttyIn.setRawMode(false); } catch {}
+    try { fs.closeSync(fd); } catch {}
+}
+
+// Send OSC 11 query (BEL terminator)
+try { fs.writeSync(fd, '\x1b]11;?\x07'); }
+catch { cleanup(); process.exit(1); }
 
 const buf = Buffer.alloc(1024);
 let response = '';
 const deadline = Date.now() + 2500;
 
 function tryRead() {
-    try {
-        const n = fs.readSync(fd, buf, 0, buf.length);
-        if (n > 0) response += buf.toString('utf8', 0, n);
-    } catch {}
+    while (true) {
+        try {
+            const n = fs.readSync(fd, buf, 0, buf.length, null);
+            if (n <= 0) return;
+            response += buf.toString('utf8', 0, n);
+            if (response.length > 8192) response = response.slice(-4096);
+        } catch (err) {
+            const code = err && err.code;
+            if (code === 'EAGAIN' || code === 'EWOULDBLOCK') return;
+            return;
+        }
+    }
 }
 
 function to8Bit(hex) {
@@ -231,7 +252,7 @@ function to8Bit(hex) {
 }
 
 function done() {
-    try { fs.closeSync(fd); } catch {}
+    cleanup();
     const m = response.match(/rgb:([0-9a-fA-F]{2,8})\\/([0-9a-fA-F]{2,8})\\/([0-9a-fA-F]{2,8})/);
     if (m) {
         const r = to8Bit(m[1]);
@@ -246,7 +267,7 @@ function done() {
 function poll() {
     tryRead();
     if (response.includes('rgb:') || Date.now() > deadline) return done();
-    setTimeout(poll, 20);
+    setTimeout(poll, 16);
 }
 
 poll();
@@ -395,38 +416,108 @@ function getOsc11MinIntervalMs(): number {
     return Math.max(1000, parsed);
 }
 
-async function resolveAppearance(config: Config, osc11State: Osc11State): Promise<Appearance | null> {
-    // 1. Override file (highest priority)
-    const override = await readOverrideFile(config.overrideFile, config.overrideMaxAgeMs);
-    if (override === "dark" || override === "light") return override;
-    // "auto" or null → continue
+async function resolveAppearance(
+    config: Config,
+    osc11State: Osc11State,
+    options?: { allowOsc11?: boolean; forceOsc11?: boolean },
+): Promise<Appearance | null> {
+    const trace = await resolveAppearanceWithTrace(config, osc11State, options);
+    return trace.appearance;
+}
 
-    // 2. Terminal query via OSC 11 (all environments, throttled)
-    if (isOsc11Enabled()) {
+type DetectionTrace = {
+    chosen: "override" | "osc11" | "osc11-cache" | "os" | "none";
+    appearance: Appearance | null;
+    override: Appearance | "auto" | null;
+    osc11Enabled: boolean;
+    osc11Attempted: boolean;
+    osc11Result: Appearance | null;
+    osc11UsedCache: boolean;
+    osc11SkipReason: string | null;
+    osc11Failures: number;
+    osResult: Appearance | null;
+};
+
+async function resolveAppearanceWithTrace(
+    config: Config,
+    osc11State: Osc11State,
+    options?: { allowOsc11?: boolean; forceOsc11?: boolean },
+): Promise<DetectionTrace> {
+    const trace: DetectionTrace = {
+        chosen: "none",
+        appearance: null,
+        override: null,
+        osc11Enabled: isOsc11Enabled(),
+        osc11Attempted: false,
+        osc11Result: null,
+        osc11UsedCache: false,
+        osc11SkipReason: null,
+        osc11Failures: osc11State.failures,
+        osResult: null,
+    };
+
+    const override = await readOverrideFile(config.overrideFile, config.overrideMaxAgeMs);
+    trace.override = override;
+    if (override === "dark" || override === "light") {
+        trace.chosen = "override";
+        trace.appearance = override;
+        return trace;
+    }
+
+    const forceOsc11 = options?.forceOsc11 === true;
+    const allowOsc11 = forceOsc11 || options?.allowOsc11 === true;
+
+    if (trace.osc11Enabled && allowOsc11) {
         const now = Date.now();
         const minIntervalMs = getOsc11MinIntervalMs();
+        const canProbe = now >= osc11State.disabledUntil && (forceOsc11 || now - osc11State.lastCheckedAt >= minIntervalMs);
 
-        if (now >= osc11State.disabledUntil && now - osc11State.lastCheckedAt >= minIntervalMs) {
+        if (canProbe) {
+            trace.osc11Attempted = true;
             osc11State.lastCheckedAt = now;
             const fromTerminal = await queryTerminalBackground();
+            trace.osc11Result = fromTerminal;
             if (fromTerminal) {
                 osc11State.lastAppearance = fromTerminal;
                 osc11State.failures = 0;
-                return fromTerminal;
+                trace.osc11Failures = 0;
+                trace.chosen = "osc11";
+                trace.appearance = fromTerminal;
+                return trace;
             }
 
             osc11State.failures += 1;
+            trace.osc11Failures = osc11State.failures;
             if (osc11State.failures >= OSC11_DISABLE_AFTER_FAILURES) {
                 osc11State.disabledUntil = now + OSC11_DISABLE_COOLDOWN_MS;
                 osc11State.failures = 0;
+                trace.osc11Failures = 0;
+                trace.osc11SkipReason = `cooldown:${OSC11_DISABLE_COOLDOWN_MS}`;
             }
+        } else if (now < osc11State.disabledUntil) {
+            trace.osc11SkipReason = `cooldown-until:${new Date(osc11State.disabledUntil).toISOString()}`;
+        } else {
+            trace.osc11SkipReason = `throttled:${minIntervalMs}`;
         }
 
-        if (osc11State.lastAppearance) return osc11State.lastAppearance;
+        if (osc11State.lastAppearance) {
+            trace.osc11UsedCache = true;
+            trace.chosen = "osc11-cache";
+            trace.appearance = osc11State.lastAppearance;
+            return trace;
+        }
+    } else {
+        trace.osc11SkipReason = trace.osc11Enabled ? "disabled-by-mode" : "disabled";
     }
 
-    // 3. OS-level detection (fallback)
-    return detectOSAppearance();
+    const fromOS = await detectOSAppearance();
+    trace.osResult = fromOS;
+    if (fromOS) {
+        trace.chosen = "os";
+        trace.appearance = fromOS;
+    }
+
+    return trace;
 }
 
 // ---------------------------------------------------------------------------
@@ -495,12 +586,15 @@ export default function systemThemeBridge(pi: ExtensionAPI): void {
         );
     }
 
-    async function tick(ctx: ExtensionContext): Promise<void> {
+    async function tick(
+        ctx: ExtensionContext,
+        options?: { allowOsc11?: boolean; forceOsc11?: boolean },
+    ): Promise<void> {
         if (!shouldAutoSync(ctx) || inFlight) return;
 
         inFlight = true;
         try {
-            const appearance = await resolveAppearance(config, osc11State);
+            const appearance = await resolveAppearance(config, osc11State, options);
             if (!appearance) return;
 
             const targetTheme = appearance === "dark" ? config.darkTheme : config.lightTheme;
@@ -592,6 +686,76 @@ export default function systemThemeBridge(pi: ExtensionAPI): void {
         },
     });
 
+    // -- /system-theme-refresh command (manual fallback) ---------------------
+
+    pi.registerCommand("system-theme-refresh", {
+        description: "Manually trigger appearance detection and apply mapped theme",
+        handler: async (_args, ctx) => {
+            if (!canManageThemes(ctx)) {
+                if (ctx.hasUI) ctx.ui.notify("Requires interactive mode with themes.", "info");
+                return;
+            }
+
+            config = await loadConfig();
+            resetOsc11State();
+
+            const trace = await resolveAppearanceWithTrace(config, osc11State, { forceOsc11: true });
+            const appearance = trace.appearance;
+            if (!appearance) {
+                ctx.ui.notify("Refresh failed: could not detect appearance.", "warning");
+                return;
+            }
+
+            const targetTheme = appearance === "dark" ? config.darkTheme : config.lightTheme;
+            const result = ctx.ui.setTheme(targetTheme);
+            if (!result.success) {
+                ctx.ui.notify(`Refresh failed: ${result.error ?? "unknown"}`, "error");
+                return;
+            }
+
+            lastAppliedTheme = targetTheme;
+            restartPolling(ctx);
+            ctx.ui.notify(`Theme refreshed (${trace.chosen}): ${appearance} → ${targetTheme}`, "info");
+        },
+    });
+
+    // -- /system-theme-debug command (detection trace) -----------------------
+
+    pi.registerCommand("system-theme-debug", {
+        description: "Show detection trace (override / OSC11 / OS fallback)",
+        handler: async (_args, ctx) => {
+            if (!ctx.hasUI) return;
+
+            config = await loadConfig();
+            const trace = await resolveAppearanceWithTrace(config, osc11State, { forceOsc11: true });
+            const targetTheme =
+                trace.appearance === "dark"
+                    ? config.darkTheme
+                    : trace.appearance === "light"
+                      ? config.lightTheme
+                      : "n/a";
+
+            const lines = [
+                `chosen=${trace.chosen}`,
+                `appearance=${trace.appearance ?? "null"}`,
+                `override=${trace.override ?? "null"}`,
+                `osc11.enabled=${trace.osc11Enabled}`,
+                `osc11.attempted=${trace.osc11Attempted}`,
+                `osc11.result=${trace.osc11Result ?? "null"}`,
+                `osc11.cache=${trace.osc11UsedCache ? trace.appearance ?? "null" : "none"}`,
+                `osc11.skip=${trace.osc11SkipReason ?? "none"}`,
+                `osc11.failures=${trace.osc11Failures}`,
+                `os.result=${trace.osResult ?? "null"}`,
+                `targetTheme=${targetTheme}`,
+                `currentTheme=${ctx.ui.theme.name ?? "unknown"}`,
+                `pollMs=${config.pollMs}`,
+            ];
+
+            console.warn(`[pi-sync-system-theme][debug] ${lines.join(" | ")}`);
+            ctx.ui.notify(lines.join("\n"), "info");
+        },
+    });
+
     // -- /system-theme-push command (write override file) ---------------------
 
     pi.registerCommand("system-theme-push", {
@@ -637,7 +801,7 @@ export default function systemThemeBridge(pi: ExtensionAPI): void {
 
         // Force immediate theme reconciliation when entering a session
         // (especially important after /resume from a differently-themed session).
-        await tick(ctx);
+        await tick(ctx, { allowOsc11: true, forceOsc11: true });
         restartPolling(ctx);
     }
 
