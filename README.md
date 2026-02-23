@@ -33,6 +33,17 @@ pi install npm:pi-sync-system-theme
 > pi remove npm:pi-system-theme
 > ```
 
+## Package rename migration
+
+This package was renamed from `pi-system-theme-ssh-bridge` to `pi-sync-system-theme`.
+
+If you installed the old package name, run:
+
+```bash
+pi remove npm:pi-system-theme-ssh-bridge
+pi install npm:pi-sync-system-theme
+```
+
 ## Configuration
 
 Use the `/system-theme` command inside pi to configure:
