@@ -1,5 +1,5 @@
 /**
- * pi-system-theme-ssh-bridge
+ * pi-sync-system-theme
  *
  * Sync pi theme with system appearance — works both locally and over SSH.
  *
@@ -518,7 +518,7 @@ export default function systemThemeBridge(pi: ExtensionAPI): void {
                 const msg = result.error ?? "unknown";
                 if (lastAppliedTheme !== `err:${targetTheme}:${msg}`) {
                     lastAppliedTheme = `err:${targetTheme}:${msg}`;
-                    console.warn(`[pi-system-theme-ssh-bridge] setTheme("${targetTheme}"): ${msg}`);
+                    console.warn(`[pi-sync-system-theme] setTheme("${targetTheme}"): ${msg}`);
                 }
             }
         } finally {
@@ -554,7 +554,7 @@ export default function systemThemeBridge(pi: ExtensionAPI): void {
                 const saveOpt = "Save and apply";
                 const cancelOpt = "Cancel";
 
-                const choice = await ctx.ui.select("pi-system-theme-ssh-bridge", [
+                const choice = await ctx.ui.select("pi-sync-system-theme", [
                     darkOpt,
                     lightOpt,
                     pollOpt,

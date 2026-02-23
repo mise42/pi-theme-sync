@@ -1,6 +1,6 @@
 {
-    "name": "pi-system-theme-ssh-bridge",
-    "version": "0.1.1",
+    "name": "pi-sync-system-theme",
+    "version": "0.2.0",
     "description": "Sync pi theme with system appearance — works locally and over SSH via OSC 11 terminal queries",
     "keywords": [
         "pi-package",
@@ -27,10 +27,10 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/mise42/pi-system-theme-ssh-bridge.git"
+        "url": "git+https://github.com/mise42/pi-sync-system-theme.git"
     },
-    "homepage": "https://github.com/mise42/pi-system-theme-ssh-bridge#readme",
+    "homepage": "https://github.com/mise42/pi-sync-system-theme#readme",
     "bugs": {
-        "url": "https://github.com/mise42/pi-system-theme-ssh-bridge/issues"
+        "url": "https://github.com/mise42/pi-sync-system-theme/issues"
     }
 }

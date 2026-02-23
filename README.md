@@ -1,4 +1,4 @@
-# pi-system-theme-ssh-bridge
+# pi-sync-system-theme
 
 Sync pi theme with system appearance — works both **locally** and **over SSH**.
 
@@ -25,7 +25,7 @@ The OSC 11 query runs in a short-lived subprocess that opens `/dev/tty` directly
 ## Install
 
 ```bash
-pi install npm:pi-system-theme-ssh-bridge
+pi install npm:pi-sync-system-theme
 ```
 
 > **Important:** Remove `pi-system-theme` first to avoid two extensions fighting over `setTheme`:
@@ -86,7 +86,7 @@ For environments where neither OSC 11 nor OS detection works, you can push an ov
 ## Migrating from pi-system-theme
 
 1. `pi remove npm:pi-system-theme`
-2. `pi install npm:pi-system-theme-ssh-bridge`
+2. `pi install npm:pi-sync-system-theme`
 3. Done. Your `~/.pi/agent/system-theme.json` config (if any) is reused automatically.
 
 ## License
