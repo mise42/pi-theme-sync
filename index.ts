@@ -61,7 +61,7 @@ const DEFAULT_CONFIG: Config = {
 const GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".pi", "agent", "system-theme.json");
 const DETECTION_TIMEOUT_MS = 1200;
 const MIN_POLL_MS = 1000;
-const OSC11_QUERY_TIMEOUT_MS = 1200;
+const OSC11_QUERY_TIMEOUT_MS = 2200;
 const OSC11_MIN_INTERVAL_MS = 15_000;
 const OSC11_DISABLE_AFTER_FAILURES = 3;
 const OSC11_DISABLE_COOLDOWN_MS = 60_000;
@@ -216,14 +216,16 @@ let fd;
 try { fd = fs.openSync('/dev/tty', fs.constants.O_RDWR | fs.constants.O_NOCTTY | O_NONBLOCK); }
 catch { process.exit(1); }
 
-// Send OSC 11 query.
-// Use ST terminator for better compatibility with tmux passthrough.
-try { fs.writeSync(fd, '\x1b]11;?\x1b\\'); }
+// Send OSC 11 query. Emit both ST and BEL terminated variants for compatibility.
+try {
+    fs.writeSync(fd, '\x1b]11;?\x1b\\');
+    fs.writeSync(fd, '\x1b]11;?\x07');
+}
 catch { try { fs.closeSync(fd); } catch {} process.exit(1); }
 
 const buf = Buffer.alloc(1024);
 let response = '';
-const deadline = Date.now() + 1000;
+const deadline = Date.now() + 1800;
 
 function tryRead() {
     while (true) {
@@ -250,7 +252,7 @@ function to8Bit(hex) {
 function done() {
     try { fs.closeSync(fd); } catch {}
     // Keep parser permissive: tmux may wrap control sequences, but rgb payload remains stable.
-    const m = response.match(/rgb:([0-9a-fA-F]{2,4})\\/([0-9a-fA-F]{2,4})\\/([0-9a-fA-F]{2,4})/);
+    const m = response.match(/rgb:([0-9a-fA-F]{2,8})\\/([0-9a-fA-F]{2,8})\\/([0-9a-fA-F]{2,8})/);
     if (m) {
         const r = to8Bit(m[1]);
         const g = to8Bit(m[2]);

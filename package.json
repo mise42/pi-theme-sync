@@ -1,6 +1,6 @@
 {
     "name": "pi-sync-system-theme",
-    "version": "0.2.2",
+    "version": "0.2.3",
     "description": "Sync pi theme with system appearance — works locally and over SSH via OSC 11 terminal queries",
     "keywords": [
         "pi-package",
