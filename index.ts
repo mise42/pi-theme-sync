@@ -52,7 +52,7 @@ type OverridePayload = {
 const DEFAULT_CONFIG: Config = {
     darkTheme: "dark",
     lightTheme: "light",
-    pollMs: 8000,
+    pollMs: 4000,
     overrideFile: path.join(os.homedir(), ".pi", "agent", "theme-sync-override.json"),
     overrideMaxAgeMs: 60_000,
 };
@@ -61,7 +61,7 @@ const GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".pi", "agent", "theme-sync-c
 const DETECTION_TIMEOUT_MS = 1200;
 const MIN_POLL_MS = 1000;
 const OSC11_QUERY_TIMEOUT_MS = 3200;
-const OSC11_MIN_INTERVAL_MS = 15_000;
+const OSC11_MIN_INTERVAL_MS = 4_000;
 const OSC11_DISABLE_AFTER_FAILURES = 3;
 const OSC11_DISABLE_COOLDOWN_MS = 60_000;
 
@@ -101,10 +101,6 @@ function extractStderr(error: unknown): string {
 function parseOverrideAppearance(value: unknown): OverrideAppearance | null {
     if (value === "dark" || value === "light" || value === "auto") return value;
     return null;
-}
-
-function isDefaultThemeName(name: string | undefined): boolean {
-    return name === DEFAULT_CONFIG.darkTheme || name === DEFAULT_CONFIG.lightTheme;
 }
 
 function canManageThemes(ctx: ExtensionContext): boolean {
@@ -416,14 +412,29 @@ function getOsc11MinIntervalMs(): number {
 }
 
 function isOSFallbackEnabled(): boolean {
-    const raw = String(process.env.PI_THEME_SYNC_OS_FALLBACK ?? "0").trim().toLowerCase();
-    return raw === "1" || raw === "true" || raw === "on";
+    const raw = String(process.env.PI_THEME_SYNC_OS_FALLBACK ?? "auto").trim().toLowerCase();
+    if (raw === "1" || raw === "true" || raw === "on") return true;
+    if (raw === "0" || raw === "false" || raw === "off") return false;
+    // auto: use OS fallback locally for stability; avoid remote host OS mismatch.
+    return !isLikelyRemoteSession();
+}
+
+function isLikelyRemoteSession(): boolean {
+    return Boolean(process.env.SSH_CONNECTION || process.env.SSH_CLIENT || process.env.SSH_TTY);
+}
+
+function allowBackgroundOsc11(): boolean {
+    const raw = String(process.env.PI_THEME_SYNC_BACKGROUND_OSC11 ?? "auto").trim().toLowerCase();
+    if (raw === "1" || raw === "true" || raw === "on") return true;
+    if (raw === "0" || raw === "false" || raw === "off") return false;
+    // auto: prefer OSC11 polling locally, avoid it for likely remote sessions.
+    return !isLikelyRemoteSession();
 }
 
 async function resolveAppearance(
     config: Config,
     osc11State: Osc11State,
-    options?: { allowOsc11?: boolean; forceOsc11?: boolean },
+    options?: { allowOsc11?: boolean; forceOsc11?: boolean; allowOsc11Cache?: boolean },
 ): Promise<Appearance | null> {
     const trace = await resolveAppearanceWithTrace(config, osc11State, options);
     return trace.appearance;
@@ -445,7 +456,7 @@ type DetectionTrace = {
 async function resolveAppearanceWithTrace(
     config: Config,
     osc11State: Osc11State,
-    options?: { allowOsc11?: boolean; forceOsc11?: boolean },
+    options?: { allowOsc11?: boolean; forceOsc11?: boolean; allowOsc11Cache?: boolean },
 ): Promise<DetectionTrace> {
     const trace: DetectionTrace = {
         chosen: "none",
@@ -470,6 +481,7 @@ async function resolveAppearanceWithTrace(
 
     const forceOsc11 = options?.forceOsc11 === true;
     const allowOsc11 = forceOsc11 || options?.allowOsc11 === true;
+    const allowOsc11Cache = options?.allowOsc11Cache !== false;
 
     if (trace.osc11Enabled && allowOsc11) {
         const now = Date.now();
@@ -503,13 +515,6 @@ async function resolveAppearanceWithTrace(
         } else {
             trace.osc11SkipReason = `throttled:${minIntervalMs}`;
         }
-
-        if (osc11State.lastAppearance) {
-            trace.osc11UsedCache = true;
-            trace.chosen = "osc11-cache";
-            trace.appearance = osc11State.lastAppearance;
-            return trace;
-        }
     } else {
         trace.osc11SkipReason = trace.osc11Enabled ? "disabled-by-mode" : "disabled";
     }
@@ -520,7 +525,14 @@ async function resolveAppearanceWithTrace(
         if (fromOS) {
             trace.chosen = "os";
             trace.appearance = fromOS;
+            return trace;
         }
+    }
+
+    if (allowOsc11Cache && osc11State.lastAppearance) {
+        trace.osc11UsedCache = true;
+        trace.chosen = "osc11-cache";
+        trace.appearance = osc11State.lastAppearance;
     }
 
     return trace;
@@ -562,7 +574,7 @@ export default function systemThemeBridge(pi: ExtensionAPI): void {
     let inFlight = false;
     let config: Config = { ...DEFAULT_CONFIG };
     let lastAppliedTheme: string | null = null;
-    let didWarnCustomTheme = false;
+    let didWarnSetThemeFailure = false;
     const osc11State: Osc11State = {
         lastCheckedAt: 0,
         lastAppearance: null,
@@ -570,31 +582,13 @@ export default function systemThemeBridge(pi: ExtensionAPI): void {
         disabledUntil: 0,
     };
 
-    function hasThemeOverrides(): boolean {
-        return config.darkTheme !== DEFAULT_CONFIG.darkTheme || config.lightTheme !== DEFAULT_CONFIG.lightTheme;
-    }
-
     function shouldAutoSync(ctx: ExtensionContext): boolean {
-        if (!canManageThemes(ctx)) return false;
-        if (hasThemeOverrides()) return true;
-        return isDefaultThemeName(ctx.ui.theme.name);
-    }
-
-    function maybeWarnCustomTheme(ctx: ExtensionContext): void {
-        if (didWarnCustomTheme || !canManageThemes(ctx) || hasThemeOverrides()) return;
-        const currentTheme = ctx.ui.theme.name;
-        if (isDefaultThemeName(currentTheme)) return;
-        didWarnCustomTheme = true;
-        ctx.ui.notify(
-            `Current theme "${currentTheme ?? "unknown"}" is custom. ` +
-                `Auto-sync skipped. Configure /system-theme to enable.`,
-            "info",
-        );
+        return canManageThemes(ctx);
     }
 
     async function tick(
         ctx: ExtensionContext,
-        options?: { allowOsc11?: boolean; forceOsc11?: boolean },
+        options?: { allowOsc11?: boolean; forceOsc11?: boolean; allowOsc11Cache?: boolean },
     ): Promise<void> {
         if (!shouldAutoSync(ctx) || inFlight) return;
 
@@ -609,11 +603,20 @@ export default function systemThemeBridge(pi: ExtensionAPI): void {
             const result = ctx.ui.setTheme(targetTheme);
             if (result.success) {
                 lastAppliedTheme = targetTheme;
+                didWarnSetThemeFailure = false;
             } else {
                 const msg = result.error ?? "unknown";
                 if (lastAppliedTheme !== `err:${targetTheme}:${msg}`) {
                     lastAppliedTheme = `err:${targetTheme}:${msg}`;
                     console.warn(`[pi-theme-sync] setTheme("${targetTheme}"): ${msg}`);
+                }
+                if (ctx.hasUI && !didWarnSetThemeFailure) {
+                    didWarnSetThemeFailure = true;
+                    ctx.ui.notify(
+                        `Auto-sync failed to apply theme "${targetTheme}": ${msg}. ` +
+                            `Use /system-theme to configure valid dark/light theme names.`,
+                        "warning",
+                    );
                 }
             }
         } finally {
@@ -627,7 +630,10 @@ export default function systemThemeBridge(pi: ExtensionAPI): void {
             intervalId = null;
         }
         if (!shouldAutoSync(ctx)) return;
-        intervalId = setInterval(() => void tick(ctx), config.pollMs);
+        intervalId = setInterval(
+            () => void tick(ctx, { allowOsc11: allowBackgroundOsc11(), allowOsc11Cache: false }),
+            config.pollMs,
+        );
     }
 
     // -- /system-theme command (interactive settings) -------------------------
@@ -685,7 +691,6 @@ export default function systemThemeBridge(pi: ExtensionAPI): void {
                     }
                     await tick(ctx);
                     restartPolling(ctx);
-                    maybeWarnCustomTheme(ctx);
                     return;
                 }
             }
@@ -800,10 +805,7 @@ export default function systemThemeBridge(pi: ExtensionAPI): void {
         config = await loadConfig();
         resetOsc11State();
 
-        if (!shouldAutoSync(ctx)) {
-            maybeWarnCustomTheme(ctx);
-            return;
-        }
+        if (!shouldAutoSync(ctx)) return;
 
         // Force immediate theme reconciliation when entering a session
         // (especially important after /resume from a differently-themed session).

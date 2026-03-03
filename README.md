@@ -50,7 +50,7 @@ Use the `/system-theme` command inside pi to configure:
 
 1. **Dark theme** name (default: `dark`)
 2. **Light theme** name (default: `light`)
-3. **Poll interval** in ms (default: `8000`)
+3. **Poll interval** in ms (default: `4000`)
 
 Settings are saved to `~/.pi/agent/theme-sync-config.json`.
 
@@ -66,10 +66,12 @@ Settings are saved to `~/.pi/agent/theme-sync-config.json`.
 To reduce input lag and TTY contention in long-running remote sessions:
 
 - Startup and `/resume`: performs an immediate OSC11 reconciliation attempt
-- Background polling: prefers override + OS fallback (does **not** continuously probe OSC11)
+- Background polling:
+  - **Local sessions**: OSC11 polling is enabled (with min-interval throttling)
+  - **Likely remote SSH sessions**: OSC11 polling is disabled by default, preferring override + OS fallback
 - Manual fallback: `/system-theme-refresh` forces a one-shot OSC11 probe (may still fail in some remote TTY setups)
 
-This keeps startup correction intuitive while minimizing runtime interference.
+This restores local auto-switch behavior while keeping remote sessions stable by default.
 
 ### Recommended remote workflow (stable)
 
@@ -117,13 +119,13 @@ This extension queries terminal background color (OSC 11) in interactive session
 
 Recommended ranges:
 
-- `pollMs`: **3000–8000** (default `8000`)
-- `PI_THEME_SYNC_OSC11_MIN_INTERVAL_MS`: **8000–15000** (default `15000`)
+- `pollMs`: **3000–8000** (default `4000`)
+- `PI_THEME_SYNC_OSC11_MIN_INTERVAL_MS`: **4000–12000** (default `4000`)
 
 Avoid overly aggressive values unless you have tested your environment thoroughly:
 
 - `pollMs < 2000`
-- `PI_THEME_SYNC_OSC11_MIN_INTERVAL_MS < 5000`
+- `PI_THEME_SYNC_OSC11_MIN_INTERVAL_MS < 3000`
 
 If you notice lag, slash-command stutter, or startup artifacts:
 
@@ -142,13 +144,14 @@ export PI_THEME_SYNC_OSC11_ENABLED=0
 | `PI_THEME_SYNC_OVERRIDE_FILE` | `~/.pi/agent/theme-sync-override.json` | Override file path |
 | `PI_THEME_SYNC_OVERRIDE_MAX_AGE_MS` | `60000` | Max age before override is considered stale |
 | `PI_THEME_SYNC_OSC11_ENABLED` | `1` | Enable/disable OSC 11 terminal query (`0` to disable) |
-| `PI_THEME_SYNC_OSC11_MIN_INTERVAL_MS` | `15000` | Minimum interval between OSC 11 probes in interactive sessions |
-| `PI_THEME_SYNC_OS_FALLBACK` | `0` | Enable OS-level fallback detection (`1` to enable) |
+| `PI_THEME_SYNC_OSC11_MIN_INTERVAL_MS` | `4000` | Minimum interval between OSC 11 probes in interactive sessions |
+| `PI_THEME_SYNC_BACKGROUND_OSC11` | `auto` | Background OSC11 policy: `auto` = local on / likely SSH off, `1` force on, `0` force off |
+| `PI_THEME_SYNC_OS_FALLBACK` | `auto` | OS fallback policy: `auto` = local on / likely SSH off, `1` force on, `0` force off |
 
 ## Compatibility
 
 - **Terminals:** Any terminal supporting OSC 11 color queries (Ghostty, iTerm2, kitty, foot, WezTerm, xterm, etc.)
-- **OS detection fallback:** macOS, Linux (GNOME gsettings), Windows (when `PI_THEME_SYNC_OS_FALLBACK=1`)
+- **OS detection fallback:** macOS, Linux (GNOME gsettings), Windows (`PI_THEME_SYNC_OS_FALLBACK=auto` locally by default; can force with `1`)
 - **SSH:** Works transparently — no special setup required
 - **tmux:** Supported (including long-lived sessions where `SSH_*` env vars may be missing)
 - **Ghostty `theme = auto`:** Fully supported. When Ghostty switches colors, the next poll detects it.
